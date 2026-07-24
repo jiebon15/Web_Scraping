@@ -1,0 +1,80 @@
+Scraper untuk Sistem Informasi HACCP KKP (rekap kegiatan -> detail
+Surveilan MAUPUN Inspeksi, otomatis terdeteksi per halaman).
+ 
+(1) Surveilan & Inspeksi disimpan sebagai DUA SHEET terpisah di satu
+file Excel (bukan digabung dalam satu tabel dgn kolom dikosongkan lagi).
+(2) Item "SERTIFIKAT PENERAPAN HACCP" (Inspeksi) sekarang benar-benar
+mendukung LEBIH DARI SATU sertifikat: parsing tabelnya diganti dari
+regex tebak nomor jadi parsing per-kolom (Produk[Grade]/Nomor/Status/
+Batas Berlaku), dan semua link "Unggah" (bisa lebih dari satu) diambil
+lalu tiap file hasil unduhan diberi nama sesuai produknya.
+ 
+Alur:
+1. Jalankan script ini (python sribing.py).
+2. Browser Chrome akan terbuka otomatis ke halaman login.
+3. Login manual (isi captcha) dan navigasi sendiri ke halaman list rekap kegiatan
+   (halaman yang isinya tabel <tr> berisi tanggal/UPT/nama/UPI/status seperti contoh).
+4. Setelah halaman list sudah tampil di browser, kembali ke terminal dan tekan Enter.
+5. Script akan:
+   a. Membaca semua baris pada tabel list -> ambil link detail tiap baris
+      (link yang mengandung "idi=" dan "type=dtl").
+   b. Membuka SATU PER SATU halaman detail tersebut. Kalau halaman yang terbuka
+      ternyata kosong/gagal render (server lagi berat), script otomatis
+      mencoba ulang beberapa kali sebelum menyerah dan mencatatnya sebagai gagal.
+   c. Setiap halaman detail otomatis dideteksi jenisnya: "Surveilan" (blok
+      "INFO SURVEILAN" / "DOKUMENTASI SURVEILAN", 11 item checklist) atau
+      "Inspeksi" (blok "INFO INSPEKSI" / "DOKUMENTASI INSPEKSI", 13 item
+      checklist). Kedua jenis disimpan ke SHEET EXCEL TERPISAH ("Surveilan"
+      dan "Inspeksi") dalam satu file, masing-masing hanya berisi kolom
+      checklist yang relevan untuk jenisnya (tidak ada lagi kolom kosong
+      dari jenis lain).
+   d. Dari blok INFO diambil: nama, tanggal, status, alamat, daftar inspektur
+      mutu yang bertugas (dipisah per orang: nama, posisi, noreg masing-masing
+      jadi kolom sendiri), dan daftar ruang lingkup (produk) yang diperiksa
+      beserta grade-nya.
+   e. Dari blok DOKUMENTASI dibuat checklist SESUAI JUMLAH ITEM ASLI kegiatan
+      tersebut (11 utk Surveilan, 13 utk Inspeksi) -- daftar & urutan item
+      ini TETAP/statis (tidak dihitung dinamis), karena pada sistem aslinya
+      item berikutnya baru muncul kalau item sebelumnya sudah dikerjakan
+      berurutan. Item dianggap SUDAH LENGKAP kalau blok itemnya TIDAK
+      mengandung tanda "*Belum Unggah*".
+      - Khusus Surveilan, item 11 "Surat Keterangan Hasil Surveilan": nomor
+        surat & tanggal terbitnya diambil.
+      - Khusus Inspeksi, item 11 "SERTIFIKAT PENERAPAN HACCP" bisa berisi
+        LEBIH DARI SATU sertifikat/produk. Tabelnya diparsing PER BARIS
+        ("Produk [ Grade ]" | "Nomor" | "Status" | "Batas Berlaku"), semua
+        baris sertifikat ditangkap (bukan cuma satu). Semua "Produk [ Grade ]"
+        dan semua nomor sertifikat dicatat (digabung dalam satu sel, dipisah
+        "; "), sedangkan "Batas Berlaku" diambil satu nilai (nilai pertama
+        yang ditemukan, diasumsikan sama untuk semua sertifikat pada kegiatan
+        itu). Jumlah sertifikat yang terdeteksi juga dicatat di kolom
+        "Jumlah_Sertifikat". Semuanya tetap dalam SATU baris di sheet
+        Inspeksi walau sertifikatnya ada banyak.
+   f. Menyimpan hasil ke satu file Excel dengan DUA SHEET: "Surveilan" dan
+      "Inspeksi".
+   g. Kalau UNDUH_DOKUMEN = True, untuk tiap item yang statusnya "Sudah"
+      diunggah, script akan membuka halaman form Unggah item tersebut,
+      cari SEMUA link Arsip-nya (bisa lebih dari satu), lalu download
+      filenya dan me-rename sesuai nama item (mis. "Audit Kecukupan.pdf").
+      Khusus item Sertifikat Penerapan HACCP (Inspeksi) yang punya lebih
+      dari satu link Unggah, tiap file diberi nama sesuai produknya (mis.
+      "SERTIFIKAT PENERAPAN HACCP - Udang Beku [A].pdf"). Semua file dari
+      satu data dikumpulkan ke satu folder bernama "<tanggal>_<nama>" di
+      dalam folder FOLDER_UNDUHAN (default: "dokumen_terunduh").
+   h. Kalau ada halaman yang tetap gagal dibuka setelah beberapa kali
+      percobaan, URL-nya dicatat di file terpisah supaya bisa dicoba ulang.
+ 
+Install dulu: pip install selenium beautifulsoup4 pandas openpyxl requests
+Butuh Google Chrome terinstall di komputer (Selenium akan urus driver-nya otomatis).
+ 
+CATATAN:
+- Kalau halaman list rekap kegiatan Anda berhalaman-halaman (pagination),
+  script ini baru mengambil baris yang tampil di halaman yang sedang dibuka
+  saat Anda tekan Enter. Kalau perlu loop ke halaman list berikutnya juga,
+  kirim contoh HTML tombol/link pagination-nya, nanti ditambahkan.
+- Parsing blok INFO INSPEKSI dibuat dengan ASUMSI strukturnya sama persis
+  dengan blok INFO SURVEILAN (Nama/Tanggal/Status/Alamat/Inspektur Mutu yang
+  Bertugas/Ruang Lingkup yang Diperiksa), karena contoh HTML yang dikirim
+  baru mencakup blok DOKUMENTASI INSPEKSI. Sebaiknya coba dulu ke 1-2 data
+  Inspeksi untuk memastikan hasilnya sesuai; kalau ternyata strukturnya
+  beda, kirim contoh HTML blok INFO INSPEKSI-nya untuk disesuaikan.
