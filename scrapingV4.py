@@ -105,14 +105,50 @@ def ambil_daftar_link(html, base_url):
     return links
  
  
+def halaman_list_valid(html):
+    if not html:
+        return False
+    if len(html) < 1000:
+        return False
+    soup = BeautifulSoup(html, "html.parser")
+    # Halaman list dianggap valid kalau tabelnya ada, walau isinya 0 baris data
+    # (0 baris data itu wajar; yang tidak wajar adalah tabel/struktur halamannya sendiri hilang).
+    if soup.find("table") is None:
+        return False
+    return True
+
+
 def ambil_link_dari_halaman_list(driver, url_list, label):
     print(f"Membuka halaman list {label}...")
-    driver.get(url_list)
-    time.sleep(JEDA_ANTAR_HALAMAN)
-    html_list = driver.page_source
-    links = ambil_daftar_link(html_list, driver.current_url)
-    print(f"  -> Ditemukan {len(links)} data {label}.")
-    return links
+    for percobaan in range(1, MAX_PERCOBAAN + 1):
+        try:
+            driver.get(url_list)
+            time.sleep(JEDA_ANTAR_HALAMAN)
+            html_list = driver.page_source
+        except Exception as e:
+            print(f"  [!] Percobaan {percobaan}/{MAX_PERCOBAAN} error saat membuka: {e}")
+            html_list = None
+
+        if halaman_list_valid(html_list):
+            if percobaan > 1:
+                print(f"  [OK] Berhasil di percobaan ke-{percobaan}.")
+            links = ambil_daftar_link(html_list, driver.current_url)
+            print(f"  -> Ditemukan {len(links)} data {label}.")
+            return links
+
+        if percobaan < MAX_PERCOBAAN:
+            jeda = JEDA_RETRY * percobaan if JEDA_RETRY_BERTAMBAH else JEDA_RETRY
+            print(f"  [!] Halaman list {label} kosong/gagal render "
+                  f"(percobaan {percobaan}/{MAX_PERCOBAAN}), coba lagi dalam {jeda} detik...")
+            time.sleep(jeda)
+            try:
+                driver.refresh()
+                time.sleep(JEDA_ANTAR_HALAMAN)
+            except Exception:
+                pass
+
+    print(f"  [X] Tetap gagal membuka halaman list {label} setelah {MAX_PERCOBAAN} percobaan.")
+    return []
  
  
 def _cari_kotak(soup, teks_penanda):
