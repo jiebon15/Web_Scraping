@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
  
 URL_LOGIN = "https://haccp.kkp.go.id/h4/login/"
+URL_LIST_SURVEILAN = "https://haccp.kkp.go.id/h4/web.php?page=srt&sub=sma&type=list&cat=svn"
+URL_LIST_INSPEKSI = "https://haccp.kkp.go.id/h4/web.php?page=srt&sub=sma&type=list&cat=inp"
 OUTPUT_FILE = "rekap_surveilan_detail.xlsx"
 GAGAL_FILE = "gagal_dibuka.txt"
 JEDA_ANTAR_HALAMAN = 1.5  # detik, jeda normal antar buka halaman detail
@@ -100,6 +102,16 @@ def ambil_daftar_link(html, base_url):
             continue
         seen.add(full_url)
         links.append(full_url)
+    return links
+ 
+ 
+def ambil_link_dari_halaman_list(driver, url_list, label):
+    print(f"Membuka halaman list {label}...")
+    driver.get(url_list)
+    time.sleep(JEDA_ANTAR_HALAMAN)
+    html_list = driver.page_source
+    links = ambil_daftar_link(html_list, driver.current_url)
+    print(f"  -> Ditemukan {len(links)} data {label}.")
     return links
  
  
@@ -436,7 +448,27 @@ def _decode_ekstensi_download(href):
     return ""
  
  
+def _file_item_sudah_ada(folder_tujuan, nama_item):
+    """Cek apakah file untuk nama_item ini sudah pernah diunduh sebelumnya
+    (dicocokkan berdasarkan nama dasar, tanpa peduli ekstensi/suffix index)."""
+    if not os.path.isdir(folder_tujuan):
+        return False
+    nama_dasar = _sanitasi_nama_file(nama_item)
+    for fname in os.listdir(folder_tujuan):
+        fname_tanpa_ext = os.path.splitext(fname)[0]
+        # cocok persis, atau cocok dengan suffix index " (2)", " (3)", dst
+        if fname_tanpa_ext == nama_dasar or re.match(
+            rf"^{re.escape(nama_dasar)} \(\d+\)$", fname_tanpa_ext
+        ):
+            return True
+    return False
+
+
 def unduh_dokumen_item(sess, base_url, href_unggah, nama_item, folder_tujuan):
+    if _file_item_sudah_ada(folder_tujuan, nama_item):
+        print(f"    [=] Lewati (sudah ada): {nama_item}")
+        return
+
     url_unggah = urljoin(base_url, href_unggah)
     try:
         r = sess.get(url_unggah, timeout=30)
@@ -471,7 +503,9 @@ def unduh_dokumen_item(sess, base_url, href_unggah, nama_item, folder_tujuan):
             print(f"    [!] Gagal unduh '{nama_file}': {e}")
  
  
-def unduh_semua_dokumen_record(sess, base_url, segmen, checklist, tanggal, nama, jenis):
+def unduh_semua_dokumen_record(sess, base_url, segmen, checklist, tanggal, nama, jenis,
+                                item_sudah_diunduh_sebelumnya=None):
+    item_sudah_diunduh_sebelumnya = item_sudah_diunduh_sebelumnya or set()
     folder_tujuan = os.path.join(
         FOLDER_UNDUHAN,
         f"{_sanitasi_nama_file(tanggal)}_{_sanitasi_nama_file(nama)}",
@@ -479,6 +513,9 @@ def unduh_semua_dokumen_record(sess, base_url, segmen, checklist, tanggal, nama,
     for nama_item, potongan in segmen.items():
         if not checklist.get(nama_item):
             continue  # belum diunggah, tidak ada file untuk didownload
+        if nama_item in item_sudah_diunduh_sebelumnya:
+            print(f"    [-] Lewati '{nama_item}': sudah pernah diunduh & diarsipkan sebelumnya.")
+            continue
         hrefs = _cari_semua_link_unggah(potongan)
         if not hrefs:
             continue
@@ -497,7 +534,16 @@ def unduh_semua_dokumen_record(sess, base_url, segmen, checklist, tanggal, nama,
  
  
  
-def kumpulkan_data(driver, daftar_link):
+def _item_sudah_sebelumnya(baris_lama, jenis):
+    """Kembalikan set nama item checklist yang sudah berstatus 'Sudah' pada data lama (dari Excel)."""
+    if not baris_lama:
+        return set()
+    items = CHECKLIST_ITEMS_PER_JENIS[jenis]
+    return {item for item in items if str(baris_lama.get(item, "")).strip() == "Sudah"}
+
+
+def kumpulkan_data(driver, daftar_link, data_lama_gabungan=None):
+    data_lama_gabungan = data_lama_gabungan or {}
     data_surveilan = []
     data_inspeksi = []
     gagal = []
@@ -549,8 +595,10 @@ def kumpulkan_data(driver, daftar_link):
                 baris["SKV_Nomor"] = detail.get("nomor", "")
                 baris["SKV_Tanggal"] = detail.get("tanggal", "")
                 if UNDUH_DOKUMEN:
+                    item_lama = _item_sudah_sebelumnya(data_lama_gabungan.get(url), jenis)
                     unduh_semua_dokumen_record(
-                        sess, url, segmen, checklist, info["tanggal"], info["nama"], jenis
+                        sess, url, segmen, checklist, info["tanggal"], info["nama"], jenis,
+                        item_sudah_diunduh_sebelumnya=item_lama,
                     )
                 data_surveilan.append(baris)
             else:
@@ -560,8 +608,10 @@ def kumpulkan_data(driver, daftar_link):
                 baris["Sertifikat_Nomor"] = detail.get("nomor", "")
                 baris["Sertifikat_Batas_Berlaku"] = detail.get("batas", "")
                 if UNDUH_DOKUMEN:
+                    item_lama = _item_sudah_sebelumnya(data_lama_gabungan.get(url), jenis)
                     unduh_semua_dokumen_record(
-                        sess, url, segmen, checklist, info["tanggal"], info["nama"], jenis
+                        sess, url, segmen, checklist, info["tanggal"], info["nama"], jenis,
+                        item_sudah_diunduh_sebelumnya=item_lama,
                     )
                 data_inspeksi.append(baris)
  
@@ -674,19 +724,21 @@ def main():
     driver.get(URL_LOGIN)
  
     input(
-        "Login manual & buka halaman list rekap kegiatan di browser, "
-        "lalu tekan Enter di sini..."
+        "Silakan login manual (termasuk isi captcha) di browser, "
+        "lalu tekan Enter di sini untuk melanjutkan otomatis..."
     )
  
-    html_list = driver.page_source
-    daftar_link = ambil_daftar_link(html_list, driver.current_url)
-    daftar_link = list(reversed(daftar_link))  # mulai dari data paling akhir (bawah tabel) dulu
-    print(f"Ditemukan {len(daftar_link)} data pada halaman list.")
+    link_surveilan = ambil_link_dari_halaman_list(driver, URL_LIST_SURVEILAN, "Surveilan")
+    link_inspeksi = ambil_link_dari_halaman_list(driver, URL_LIST_INSPEKSI, "Inspeksi")
+ 
+    # mulai dari data paling akhir (bawah tabel) dulu, masing-masing kategori
+    daftar_link = list(reversed(link_surveilan)) + list(reversed(link_inspeksi))
+    print(f"Total ditemukan {len(daftar_link)} data ({len(link_surveilan)} Surveilan, {len(link_inspeksi)} Inspeksi).")
  
     if not daftar_link:
         print(
-            "Tidak ada link detail yang ditemukan. Pastikan Anda sudah berada "
-            "di halaman list rekap kegiatan (tabel dengan link detail per baris)."
+            "Tidak ada link detail yang ditemukan. Cek apakah login berhasil "
+            "dan struktur halaman list belum berubah."
         )
         driver.quit()
         return
@@ -715,7 +767,9 @@ def main():
         driver.quit()
         return
  
-    data_surveilan_baru, data_inspeksi_baru, gagal = kumpulkan_data(driver, link_diproses)
+    data_surveilan_baru, data_inspeksi_baru, gagal = kumpulkan_data(
+        driver, link_diproses, data_lama_gabungan=data_lama_gabungan
+    )
  
     for baris in data_surveilan_baru:
         data_lama_surveilan[baris["url"]] = baris
