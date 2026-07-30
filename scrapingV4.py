@@ -426,6 +426,46 @@ def _sanitasi_nama_file(teks):
     teks = re.sub(r'[\\/:*?"<>|]', "_", teks)
     teks = teks.strip(" .")
     return teks or "tanpa_nama"
+
+
+NAMA_BULAN_ID = [
+    "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+]
+NAMA_BULAN_ID_LOWER = {b.lower(): i + 1 for i, b in enumerate(NAMA_BULAN_ID)}
+
+
+def _folder_bulan_dari_tanggal(tanggal):
+    """Ubah teks tanggal (berbagai format yang mungkin muncul di halaman) jadi
+    nama folder 'Bulan Tahun' berbahasa Indonesia, mis. 'Juli 2026'.
+    Kalau tidak berhasil diparse, kembalikan 'Tanggal Tidak Diketahui'."""
+    t = _clean(tanggal)
+    if not t:
+        return "Tanggal Tidak Diketahui"
+
+    # Format: "29 Juli 2026" atau "29 juli 2026"
+    m = re.search(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", t)
+    if m:
+        nama_bulan = m.group(2).lower()
+        if nama_bulan in NAMA_BULAN_ID_LOWER:
+            idx = NAMA_BULAN_ID_LOWER[nama_bulan]
+            return f"{NAMA_BULAN_ID[idx - 1]} {m.group(3)}"
+
+    # Format: "29-07-2026" atau "29/07/2026" (DD-MM-YYYY)
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", t)
+    if m:
+        bulan = int(m.group(2))
+        if 1 <= bulan <= 12:
+            return f"{NAMA_BULAN_ID[bulan - 1]} {m.group(3)}"
+
+    # Format: "2026-07-29" (YYYY-MM-DD)
+    m = re.search(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", t)
+    if m:
+        bulan = int(m.group(2))
+        if 1 <= bulan <= 12:
+            return f"{NAMA_BULAN_ID[bulan - 1]} {m.group(1)}"
+
+    return "Tanggal Tidak Diketahui"
  
  
 def buat_session_dari_driver(driver):
@@ -542,8 +582,11 @@ def unduh_dokumen_item(sess, base_url, href_unggah, nama_item, folder_tujuan):
 def unduh_semua_dokumen_record(sess, base_url, segmen, checklist, tanggal, nama, jenis,
                                 item_sudah_diunduh_sebelumnya=None):
     item_sudah_diunduh_sebelumnya = item_sudah_diunduh_sebelumnya or set()
+    folder_bulan = _folder_bulan_dari_tanggal(tanggal)
     folder_tujuan = os.path.join(
         FOLDER_UNDUHAN,
+        jenis,
+        folder_bulan,
         f"{_sanitasi_nama_file(tanggal)}_{_sanitasi_nama_file(nama)}",
     )
     for nama_item, potongan in segmen.items():
